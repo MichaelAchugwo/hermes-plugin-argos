@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-plugin-argos"
+version = "1.0.0"
+description = "Autonomous Rotation & Governance of Subscriptions for Hermes ChatGPT/Codex OAuth pools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Michael Achugwo"}]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/MichaelAchugwo/hermes-plugin-argos"
+Repository = "https://github.com/MichaelAchugwo/hermes-plugin-argos"
+Issues = "https://github.com/MichaelAchugwo/hermes-plugin-argos/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_argos"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

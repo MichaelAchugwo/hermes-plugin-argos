@@ -1,0 +1,12 @@
+name: argos
+version: 1.0.0
+description: "ARGOS — Autonomous Rotation & Governance of Subscriptions for pooled ChatGPT/Codex OAuth accounts."
+author: "Michael Achugwo + Hermes Agent"
+homepage: "https://github.com/MichaelAchugwo/hermes-plugin-argos"
+license: MIT
+manifest_version: 2
+api_version: 1
+tags: [openai, codex, oauth, credential-pool, desktop]
+provides_hooks:
+  - on_session_start
+config_schema: {}

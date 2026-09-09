@@ -1,0 +1,14 @@
+{
+  "name": "argos",
+  "label": "ARGOS",
+  "description": "Quota and failover dashboard for pooled ChatGPT/Codex OAuth subscriptions",
+  "icon": "Gauge",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/argos",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
