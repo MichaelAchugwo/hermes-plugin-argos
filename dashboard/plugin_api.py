@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
+
+# Hermes imports a dashboard ``plugin_api.py`` by absolute file path.  Unlike
+# normal plugin discovery that does not put the plugin root on sys.path, so
+# make the colocated package importable before loading ARGOS modules.
+_PLUGIN_ROOT = str(Path(__file__).resolve().parents[1])
+if _PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT)
 
 from hermes_argos.authstore import AuthStore, AuthStoreError, SelectorError
 from hermes_argos.config import load_config, save_config

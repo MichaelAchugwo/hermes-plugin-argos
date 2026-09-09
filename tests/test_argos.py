@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -176,4 +179,23 @@ def test_keepalive_persists_rotated_tokens_and_updates_active_singleton(tmp_path
     assert report["refreshed"] == 1
     assert updated["credential_pool"]["openai-codex"][0]["refresh_token"] == "refresh-new"
     assert updated["providers"]["openai-codex"]["tokens"]["access_token"] == "access-new"
+
+
+def test_dashboard_api_imports_when_hermes_loads_it_by_file_path(tmp_path: Path) -> None:
+    """Dashboard plugin APIs are loaded outside the plugin package's sys.path."""
+    api = Path(__file__).parents[1] / "dashboard" / "plugin_api.py"
+    code = (
+        "import importlib.util\n"
+        f"p = {str(api)!r}\n"
+        "s = importlib.util.spec_from_file_location('dashboard_probe', p)\n"
+        "m = importlib.util.module_from_spec(s)\n"
+        "s.loader.exec_module(m)\n"
+        "assert m.router is not None\n"
+    )
+    clean_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env=clean_env,
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
