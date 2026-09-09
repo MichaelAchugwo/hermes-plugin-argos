@@ -4,7 +4,7 @@ description: "ARGOS — Autonomous Rotation & Governance of Subscriptions for po
 author: "Michael Achugwo + Hermes Agent"
 homepage: "https://github.com/MichaelAchugwo/hermes-plugin-argos"
 license: MIT
-manifest_version: 2
+manifest_version: 1
 api_version: 1
 tags: [openai, codex, oauth, credential-pool, desktop]
 provides_hooks:
