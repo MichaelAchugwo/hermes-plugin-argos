@@ -127,6 +127,57 @@ hermes subs status
 
 Never copy tokens between entries manually. ARGOS rejects duplicate refresh-token fingerprints.
 
+### Multi-subscription operating procedure
+
+ARGOS pools **separate `openai-codex` OAuth credentials in Hermes**. It does
+not merge subscriptions, modify the ChatGPT/Codex desktop application, scrape
+the ChatGPT website, or bypass a plan limit. Each account must be one you are
+authorized to use and must complete its own official OpenAI device login.
+
+Use a clear label when adding each account:
+
+```bash
+hermes auth add openai-codex --label "Codex sub 2"
+hermes auth add openai-codex --label "Codex sub 3"
+```
+
+The command opens the official device-login flow. In the terminal, open the
+displayed OpenAI URL, enter the displayed one-time code, sign in to the
+intended account, and approve. Do not paste device codes or OAuth tokens into
+chat, configuration files, or a shell history.
+
+After every addition, run:
+
+```bash
+hermes auth list openai-codex
+hermes subs refresh
+hermes subs status
+hermes subs doctor
+```
+
+Interpret the result before expecting a failover:
+
+- `ok` means both known quota windows are above the configured threshold and
+  the account can be selected.
+- `limited` means a relevant 5-hour or weekly window is empty or at threshold;
+  ARGOS deliberately skips it.
+- `unavailable` means the usage probe failed; `reauth` means the OAuth refresh
+  needs to be completed again.
+
+Automatic rotation is on by default. Verify or change it with:
+
+```bash
+hermes subs auto on
+hermes subs current
+hermes subs next             # manual fallback
+hermes subs use "Codex sub 2" # explicit manual selection
+```
+
+When every account is limited, ARGOS leaves Hermes's configured fallback-model
+policy in control; it cannot manufacture additional quota. A running agent can
+rotate on a real cap error through Hermes core recovery, while new sessions
+start from ARGOS's latest healthy ordering.
+
 ## CLI
 
 ```text
@@ -158,7 +209,7 @@ Hermes v0.21.0 already owns the critical in-flight retry path:
 - Exhaustion is persisted in `credential_pool.openai-codex[]`, so Ctrl+C does not erase it.
 - When every entry is unavailable, Hermes's configured `fallback_model` remains authoritative.
 
-ARGOS deliberately does not monkeypatch this tested core logic. It fetches each account's windows, determines health, and persists priority order so Hermes core's stable `fill_first` selector uses the desired policy on new agents/sessions. Desktop/dashboard polling and a background session-start hook maintain that order. An already-running agent retains its in-memory pool until native core rotation or agent/session recreation.
+ARGOS deliberately does not monkeypatch this tested core logic. It fetches each account's official usage windows, determines health, and persists priority order so Hermes core's stable `fill_first` selector uses the desired policy on new agents/sessions. A plugin-lifetime quota scheduler and Desktop/dashboard polling maintain that order. An already-running agent retains its in-memory pool until native core rotation or agent/session recreation.
 
 Default `least_weekly_remaining` spends the healthy subscription nearest its weekly limit first, preserving fuller weeks as reserves.
 
@@ -171,7 +222,8 @@ argos:
   auto_rotate: true
   strategy: least_weekly_remaining
   empty_threshold_pct: 1
-  usage_cache_seconds: 300
+  usage_cache_seconds: 5
+  usage_poll_seconds: 5
   keepalive_enabled: true
   access_refresh_skew_minutes: 20
   keepalive_interval_hours: 6
@@ -180,6 +232,10 @@ argos:
 - `least_weekly_remaining`: lowest healthy weekly balance first.
 - `fill_first`: priority order only.
 - `round_robin`: next healthy account during policy refresh.
+- `usage_cache_seconds`: maximum age of an official usage snapshot before a normal status read refetches it. `5` permits five-second snapshots.
+- `usage_poll_seconds`: scheduler cadence while the Hermes plugin backend is running. `5` checks every account against the official usage endpoint every five seconds and reapplies the healthy-account policy.
+
+A five-second cadence intentionally makes more official quota requests. Use it only for a small, user-authorized pool and raise both values if the provider reports throttling. The scheduler never uses browser automation, website scraping, cookies, or device-login data.
 
 ## Desktop and dashboard
 
@@ -191,7 +247,7 @@ ARGOS contributes to native Desktop:
 - hover detail for every account;
 - Refresh, Use account, and Auto controls.
 
-The web dashboard mounts the same backend under `/api/plugins/argos` and adds an ARGOS tab. Both surfaces poll cached data every 60 seconds; Refresh forces a live fetch.
+The web dashboard mounts the same backend under `/api/plugins/argos` and adds an ARGOS tab. Both Desktop surfaces poll every 5 seconds; cache and scheduler cadence are configured independently in `argos.yaml`. Refresh forces a live fetch.
 
 ### Desktop checklist
 

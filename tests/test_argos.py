@@ -11,6 +11,7 @@ import pytest
 
 from hermes_argos.authstore import AuthStore, DuplicateCredentialError
 from hermes_argos.keepalive import run_keepalive
+from hermes_argos.config import load_config
 
 from hermes_argos.pool import choose_account, health_for_usage, sync_usage_health
 from hermes_argos.usage import parse_usage_payload
@@ -179,6 +180,18 @@ def test_keepalive_persists_rotated_tokens_and_updates_active_singleton(tmp_path
     assert report["refreshed"] == 1
     assert updated["credential_pool"]["openai-codex"][0]["refresh_token"] == "refresh-new"
     assert updated["providers"]["openai-codex"]["tokens"]["access_token"] == "access-new"
+
+
+def test_config_allows_five_second_quota_polling(tmp_path: Path) -> None:
+    (tmp_path / "argos.yaml").write_text(
+        "argos:\n  usage_cache_seconds: 5\n  usage_poll_seconds: 5\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+
+    assert config["usage_cache_seconds"] == 5
+    assert config["usage_poll_seconds"] == 5
 
 
 def test_dashboard_api_imports_when_hermes_loads_it_by_file_path(tmp_path: Path) -> None:

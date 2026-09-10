@@ -73,7 +73,7 @@ function AccountCard({ account, compact = false }) {
 }
 function Dashboard({ compact = false }) {
   const queryClient = useQueryClient()
-  const query = useQuery({ queryKey: [ID, 'status'], queryFn: () => status(false), refetchInterval: 60_000 })
+  const query = useQuery({ queryKey: [ID, 'status'], queryFn: () => status(false), refetchInterval: 5_000 })
   const refresh = useMutation({
     mutationFn: () => status(true),
     onSuccess: data => queryClient.setQueryData([ID, 'status'], data),
@@ -100,7 +100,7 @@ function Dashboard({ compact = false }) {
   ] })
 }
 function Chip() {
-  const query = useQuery({ queryKey: [ID, 'status'], queryFn: () => status(false), refetchInterval: 60_000 })
+  const query = useQuery({ queryKey: [ID, 'status'], queryFn: () => status(false), refetchInterval: 5_000 })
   const data = query.data
   if (!data || !data.accounts?.length) return null
   const active = data.accounts.find(account => account.active)

@@ -11,6 +11,7 @@ DEFAULTS: dict[str, Any] = {
     "strategy": "least_weekly_remaining",
     "empty_threshold_pct": 1.0,
     "usage_cache_seconds": 300,
+    "usage_poll_seconds": 300,
     "keepalive_enabled": True,
     "access_refresh_skew_minutes": 20,
     "keepalive_interval_hours": 6,
@@ -51,7 +52,8 @@ def load_config(home: Path | str | None = None) -> dict[str, Any]:
     if merged["strategy"] not in _ALLOWED_STRATEGIES:
         merged["strategy"] = DEFAULTS["strategy"]
     merged["empty_threshold_pct"] = max(0.0, min(100.0, float(merged["empty_threshold_pct"])))
-    merged["usage_cache_seconds"] = max(30, int(merged["usage_cache_seconds"]))
+    merged["usage_cache_seconds"] = max(5, int(merged["usage_cache_seconds"]))
+    merged["usage_poll_seconds"] = max(5, int(merged["usage_poll_seconds"]))
     merged["access_refresh_skew_minutes"] = max(1, int(merged["access_refresh_skew_minutes"]))
     merged["keepalive_interval_hours"] = max(1, int(merged["keepalive_interval_hours"]))
     return merged
