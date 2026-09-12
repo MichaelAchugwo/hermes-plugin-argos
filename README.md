@@ -163,6 +163,9 @@ Interpret the result before expecting a failover:
   ARGOS deliberately skips it.
 - `unavailable` means the usage probe failed; `reauth` means the OAuth refresh
   needs to be completed again.
+- A weekly-only plan shows `—` under 5h and its real quota under week. ARGOS
+  assigns windows by reset horizon (a lone window resetting more than 24h out
+  is the weekly quota), so rotation and health use the right number.
 
 Automatic rotation is on by default. Verify or change it with:
 

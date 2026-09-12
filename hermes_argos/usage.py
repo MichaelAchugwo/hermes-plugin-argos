@@ -55,13 +55,20 @@ def parse_usage_payload(payload: dict[str, Any], *, now: float | None = None) ->
     secondary = rate.get("secondary_window") if isinstance(rate.get("secondary_window"), dict) else {}
     resets = payload.get("rate_limit_reset_credits") if isinstance(payload.get("rate_limit_reset_credits"), dict) else {}
     available_count = resets.get("available_count")
+    five_hour = _window(primary, timestamp)
+    weekly = _window(secondary, timestamp)
+    if five_hour is not None and weekly is None:
+        # Weekly-only plans report their ~7-day quota as the primary window.
+        reset_at = five_hour.get("reset_at")
+        if isinstance(reset_at, (int, float)) and reset_at - timestamp > 24 * 3600:
+            five_hour, weekly = None, five_hour
     result = {
         "available": True,
         "fetched_at": timestamp,
         "plan": _plan_name(payload.get("plan_type") or payload.get("plan")),
         "windows": {
-            "five_hour": _window(primary, timestamp),
-            "weekly": _window(secondary, timestamp),
+            "five_hour": five_hour,
+            "weekly": weekly,
         },
         "banked_resets": {
             "available_count": int(available_count) if isinstance(available_count, (int, float)) else 0,

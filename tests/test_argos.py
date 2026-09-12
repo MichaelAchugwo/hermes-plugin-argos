@@ -194,6 +194,19 @@ def test_config_allows_five_second_quota_polling(tmp_path: Path) -> None:
     assert config["usage_poll_seconds"] == 5
 
 
+def test_weekly_only_plan_remaps_long_primary_window_to_weekly() -> None:
+    now = 1_700_000_000
+    parsed = parse_usage_payload({
+        "plan_type": "chatgpt_plus",
+        "rate_limit": {
+            "primary_window": {"used_percent": 0, "reset_after_seconds": 586800},
+        },
+    }, now=now)
+    assert parsed["windows"]["five_hour"] is None
+    assert parsed["windows"]["weekly"]["remaining_pct"] == 100.0
+    assert parsed["windows"]["weekly"]["reset_at"] == now + 586800
+
+
 def test_dashboard_api_imports_when_hermes_loads_it_by_file_path(tmp_path: Path) -> None:
     """Dashboard plugin APIs are loaded outside the plugin package's sys.path."""
     api = Path(__file__).parents[1] / "dashboard" / "plugin_api.py"
