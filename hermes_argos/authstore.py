@@ -301,6 +301,11 @@ class AuthStore:
             if status:
                 target["last_status"] = status
                 target["last_status_at"] = time.time()
+            if status == "ok":
+                # A successful refresh proves the credential is alive; stale
+                # rate-limit/terminal markers must not keep it in "reauth".
+                for key in ("last_error_code", "last_error_reason", "last_error_message", "last_error_reset_at", "failure_reason"):
+                    target.pop(key, None)
             data.setdefault("credential_pool", {})[PROVIDER] = entries
             if was_active:
                 providers = data.setdefault("providers", {})

@@ -207,6 +207,114 @@ def test_weekly_only_plan_remaps_long_primary_window_to_weekly() -> None:
     assert parsed["windows"]["weekly"]["reset_at"] == now + 586800
 
 
+class ReusedRefreshError(Exception):
+    code = "refresh_token_reused"
+
+
+def test_keepalive_adopts_peer_rotated_tokens_instead_of_marking_dead(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-old", "access-old")])
+    store = AuthStore(tmp_path)
+
+    def racer(access: str, refresh: str, *, timeout_seconds: float = 20.0):
+        # Simulate another process rotating the tokens between our read and our POST.
+        store.update_tokens("acct", {
+            "access_token": "access-peer", "refresh_token": "refresh-peer",
+            "last_refresh": "2026-01-02T00:00:00Z",
+        })
+        raise ReusedRefreshError("refresh_token_reused")
+
+    report = run_keepalive(store, force=True, refresh_fn=racer)
+
+    after = store.entries()[0]
+    assert after["refresh_token"] == "refresh-peer"
+    assert after.get("last_status") != "dead"
+    assert report["accounts"][0]["status"] == "adopted"
+    assert report["refreshed"] == 0
+
+
+def test_keepalive_marks_reauth_required_only_when_stored_token_still_fails(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", "access-stale")])
+    store = AuthStore(tmp_path)
+
+    def failing(access: str, refresh: str, *, timeout_seconds: float = 20.0):
+        raise ReusedRefreshError("refresh_token_reused")
+
+    report = run_keepalive(store, force=True, refresh_fn=failing)
+
+    assert store.entries()[0]["last_status"] == "dead"
+    assert report["accounts"][0]["status"] == "reauth_required"
+
+
+def test_keepalive_success_clears_stale_error_fields(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-old", "access-old")])
+    store = AuthStore(tmp_path)
+
+    def mark_dead(data: dict) -> None:
+        entries = AuthStore._entries_in(data)
+        entries[0].update({
+            "last_status": "dead", "last_error_code": 401,
+            "last_error_reason": "refresh_token_reused",
+            "last_error_message": "OAuth refresh failed; reauthentication required",
+        })
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(mark_dead)
+
+    report = run_keepalive(
+        store, force=True,
+        refresh_fn=lambda access, refresh, timeout_seconds=20: {
+            "access_token": "access-new", "refresh_token": "refresh-new",
+            "last_refresh": "2026-01-03T00:00:00Z",
+        },
+    )
+
+    after = store.entries()[0]
+    assert report["refreshed"] == 1
+    assert after["last_status"] == "ok"
+    assert "last_error_reason" not in after
+    assert "last_error_code" not in after
+
+
+def test_keepalive_skips_while_another_run_holds_the_lock(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh", "access")])
+    store = AuthStore(tmp_path)
+    (tmp_path / "argos-keepalive.lock").write_text("held", encoding="ascii")
+    calls: list[int] = []
+
+    report = run_keepalive(
+        store, force=True,
+        refresh_fn=lambda access, refresh, timeout_seconds=20: calls.append(1) or {},
+    )
+
+    assert report.get("skipped") == "another keepalive run is in progress"
+    assert calls == []
+
+
+def test_keepalive_takes_over_a_stale_lock(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh", "access")])
+    store = AuthStore(tmp_path)
+    lock = tmp_path / "argos-keepalive.lock"
+    lock.write_text("stale", encoding="ascii")
+    stale = time.time() - 3600
+    os.utime(lock, (stale, stale))
+
+    report = run_keepalive(
+        store, force=True,
+        refresh_fn=lambda access, refresh, timeout_seconds=20: {
+            "access_token": "access-new", "refresh_token": "refresh-new",
+            "last_refresh": "2026-01-04T00:00:00Z",
+        },
+    )
+
+    assert report["refreshed"] == 1
+    assert lock.exists() is False
+
+
 def test_dashboard_api_imports_when_hermes_loads_it_by_file_path(tmp_path: Path) -> None:
     """Dashboard plugin APIs are loaded outside the plugin package's sys.path."""
     api = Path(__file__).parents[1] / "dashboard" / "plugin_api.py"

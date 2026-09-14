@@ -3,7 +3,7 @@
   "label": "ARGOS",
   "description": "Quota and failover dashboard for pooled ChatGPT/Codex OAuth subscriptions",
   "icon": "Gauge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "tab": {
     "path": "/argos",
     "position": "after:skills"

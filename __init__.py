@@ -15,13 +15,35 @@ except ImportError:  # direct-source test collection has no plugin namespace
     from hermes_argos.pool import status
 
 _last_policy_run = 0.0
+_last_keepalive_run = 0.0
 _policy_lock = threading.Lock()
 _scheduler_started = False
+# Short-lived CLI processes also load this plugin. Refresh tokens are
+# single-use, so keepalive attempts must stay rare per process; the pool store
+# (not this loop) is the source of truth for when a refresh is actually due.
+_KEEPALIVE_MIN_INTERVAL_SECONDS = 300.0
+
+
+def _refresh_policy() -> None:
+    status(force=False, apply_policy=True)
+
+
+def _run_keepalive_throttled() -> None:
+    global _last_keepalive_run
+    now = time.monotonic()
+    with _policy_lock:
+        if now - _last_keepalive_run < _KEEPALIVE_MIN_INTERVAL_SECONDS:
+            return
+        _last_keepalive_run = now
+    run_keepalive()
 
 
 def _apply_policy_on_session_start(**_kwargs) -> None:
     """Fetch official Codex quota snapshots and apply ARGOS pool policy."""
     global _last_policy_run
+    # Lazy start: registration must stay side-effect free so validation contexts
+    # (plugin doctor) never spawn a background writer thread.
+    _start_quota_scheduler()
     now = time.monotonic()
     minimum_interval = int(load_config()["usage_poll_seconds"])
     with _policy_lock:
@@ -31,8 +53,8 @@ def _apply_policy_on_session_start(**_kwargs) -> None:
 
     def worker() -> None:
         try:
-            status(force=False, apply_policy=True)
-            run_keepalive()
+            _refresh_policy()
+            _run_keepalive_throttled()
         except Exception:
             # Policy is advisory; Hermes core credential-pool recovery remains authoritative.
             return
@@ -41,7 +63,11 @@ def _apply_policy_on_session_start(**_kwargs) -> None:
 
 
 def _start_quota_scheduler() -> None:
-    """Apply quota policy while Hermes is open, not only when a chat begins."""
+    """Run quota policy while Hermes is open, not only when a chat begins.
+
+    Deliberately policy-only: OAuth keepalive is throttled to session starts so
+    many live processes cannot each POST the same single-use refresh token.
+    """
     global _scheduler_started
     with _policy_lock:
         if _scheduler_started:
@@ -50,7 +76,10 @@ def _start_quota_scheduler() -> None:
 
     def scheduler() -> None:
         while True:
-            _apply_policy_on_session_start()
+            try:
+                _refresh_policy()
+            except Exception:
+                pass
             time.sleep(int(load_config()["usage_poll_seconds"]))
 
     threading.Thread(target=scheduler, name="argos-quota-scheduler", daemon=True).start()
@@ -65,4 +94,3 @@ def register(ctx) -> None:
         description="Quota status, safe manual switching, keepalive, and automatic pool policy.",
     )
     ctx.register_hook("on_session_start", _apply_policy_on_session_start)
-    _start_quota_scheduler()

@@ -212,7 +212,32 @@ Hermes v0.21.0 already owns the critical in-flight retry path:
 - Exhaustion is persisted in `credential_pool.openai-codex[]`, so Ctrl+C does not erase it.
 - When every entry is unavailable, Hermes's configured `fallback_model` remains authoritative.
 
-ARGOS deliberately does not monkeypatch this tested core logic. It fetches each account's official usage windows, determines health, and persists priority order so Hermes core's stable `fill_first` selector uses the desired policy on new agents/sessions. A plugin-lifetime quota scheduler and Desktop/dashboard polling maintain that order. An already-running agent retains its in-memory pool until native core rotation or agent/session recreation.
+ARGOS deliberately does not monkeypatch this tested core logic. It fetches each account's official usage windows, determines health, and persists priority order so Hermes core's stable `fill_first` selector uses the desired policy on new agents/sessions. Desktop/dashboard polling plus a quota scheduler (started on the first session in a long-lived backend) maintain that order. An already-running agent retains its in-memory pool until native core rotation or agent/session recreation.
+
+### Refresh safety
+
+Codex refresh tokens are single-use. A replayed token trips OpenAI's reuse
+detection, which invalidates the whole token family — an account then shows
+`reauth` forever until a fresh login. ARGOS guards against causing that:
+
+- one cross-process lock (`$HERMES_HOME/argos-keepalive.lock`) allows a single
+  keepalive refresh at a time; concurrent runs skip instead of double-POSTing;
+- if a refresh fails with `refresh_token_reused` but the store now holds tokens
+  another process rotated in, ARGOS **adopts** them and does not mark the
+  account dead;
+- `dead` is only written when the stored token itself still fails, which
+  genuinely means "re-login required";
+- keepalive attempts are throttled to session starts (≥5 minutes apart per
+  process), never to the quota-polling loop, so many short-lived CLI processes
+  cannot each replay the same token;
+- a successful refresh clears stale error markers so the account leaves
+  `reauth` state immediately.
+
+If a subscription is marked `reauth`, re-login that one account
+(`hermes auth remove openai-codex "<label>"` then `hermes auth add
+openai-codex --label "<label>"`). Do not copy refresh tokens between Hermes
+and Codex CLI files: sharing one token family across two apps reliably
+provokes reuse detection — each app should sign in once on its own.
 
 Default `least_weekly_remaining` spends the healthy subscription nearest its weekly limit first, preserving fuller weeks as reserves.
 
