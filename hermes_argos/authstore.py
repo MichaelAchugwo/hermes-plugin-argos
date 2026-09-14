@@ -178,6 +178,8 @@ class AuthStore:
                 "last_refresh": entry.get("last_refresh"),
                 "expires_at": entry.get("expires_at"),
                 "expires_at_ms": entry.get("expires_at_ms"),
+                "refresh_required": bool(entry.get("refresh_required")),
+                "refresh_required_reason": entry.get("refresh_required_reason"),
             })
         return public
 
@@ -304,7 +306,11 @@ class AuthStore:
             if status == "ok":
                 # A successful refresh proves the credential is alive; stale
                 # rate-limit/terminal markers must not keep it in "reauth".
-                for key in ("last_error_code", "last_error_reason", "last_error_message", "last_error_reset_at", "failure_reason"):
+                for key in (
+                    "last_error_code", "last_error_reason", "last_error_message",
+                    "last_error_reset_at", "failure_reason",
+                    "refresh_required", "refresh_required_reason", "refresh_required_at",
+                ):
                     target.pop(key, None)
             data.setdefault("credential_pool", {})[PROVIDER] = entries
             if was_active:

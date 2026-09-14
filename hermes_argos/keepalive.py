@@ -4,7 +4,7 @@ import base64
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -104,6 +104,37 @@ def _peer_rotated(auth: AuthStore, identifier: str, attempted_refresh: str) -> b
     return bool(stored) and stored != attempted_refresh
 
 
+def _access_usable(access: str, *, now: float | None = None) -> bool:
+    """A live access token (or one without a readable expiry) keeps an account usable."""
+    token = str(access or "").strip()
+    if not token:
+        return False
+    expiry = _jwt_exp(token)
+    return expiry is None or expiry > float(now if now is not None else time.time())
+
+
+def _mark_refresh_required(auth: AuthStore, identifier: str, reason: str) -> None:
+    """Flag a dead refresh chain without blocking an account whose access token works.
+
+    The account stays usable until its access token expires; the marker tells the
+    user a re-login is needed for renewal and pauses pointless refresh replays.
+    """
+    def mark(data: dict[str, Any]) -> None:
+        entries = AuthStore._entries_in(data)
+        target = next((e for e in entries if str(e.get("id")) == identifier), None)
+        if target:
+            for key in ("last_error_code", "last_error_reason", "last_error_message", "last_error_reset_at", "failure_reason"):
+                target.pop(key, None)
+            target.update({
+                "last_status": "ok", "last_status_at": time.time(),
+                "refresh_required": True, "refresh_required_reason": reason,
+                "refresh_required_at": time.time(),
+                "last_refresh": datetime.now(timezone.utc).isoformat(),
+            })
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+    auth.mutate(mark)
+
+
 def run_keepalive(
     store: AuthStore | None = None, *, force: bool = False,
     refresh_fn: Callable[..., dict[str, Any]] | None = None,
@@ -125,6 +156,12 @@ def run_keepalive(
             identifier = str(entry.get("id") or "")
             label = str(entry.get("label") or identifier)
             report["checked"] += 1
+            if not force and entry.get("refresh_required"):
+                report["accounts"].append({
+                    "id": identifier, "label": label, "status": "refresh_required",
+                    "reason": "refresh chain requires re-login; refresh attempts paused",
+                })
+                continue
             if not force and not _due(entry, config, now):
                 report["accounts"].append({"id": identifier, "label": label, "status": "not_due"})
                 continue
@@ -152,6 +189,15 @@ def run_keepalive(
                     report["accounts"].append({
                         "id": identifier, "label": label, "status": "adopted",
                         "reason": "another process rotated the token family first",
+                    })
+                    continue
+                if terminal and _access_usable(access):
+                    # Refresh chain is dead but the access token still works:
+                    # keep the account usable and flag the needed re-login.
+                    _mark_refresh_required(auth, identifier, code or "refresh_token_invalidated")
+                    report["accounts"].append({
+                        "id": identifier, "label": label, "status": "refresh_required",
+                        "reason": f"{code or 'refresh failed'}; re-login needed before access token expiry",
                     })
                     continue
                 if terminal:

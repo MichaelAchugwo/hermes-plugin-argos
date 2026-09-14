@@ -225,19 +225,23 @@ detection, which invalidates the whole token family — an account then shows
 - if a refresh fails with `refresh_token_reused` but the store now holds tokens
   another process rotated in, ARGOS **adopts** them and does not mark the
   account dead;
-- `dead` is only written when the stored token itself still fails, which
-  genuinely means "re-login required";
+- a refresh failure on an account whose access token still works **degrades to
+  `refresh_required`**: the account keeps working for rotation until its access
+  token expires, the marker pauses pointless refresh replays, and a re-login is
+  flagged; `dead` (excluded from rotation) is written only when the access
+  token itself is missing or expired;
 - keepalive attempts are throttled to session starts (≥5 minutes apart per
   process), never to the quota-polling loop, so many short-lived CLI processes
   cannot each replay the same token;
 - a successful refresh clears stale error markers so the account leaves
   `reauth` state immediately.
 
-If a subscription is marked `reauth`, re-login that one account
-(`hermes auth remove openai-codex "<label>"` then `hermes auth add
-openai-codex --label "<label>"`). Do not copy refresh tokens between Hermes
-and Codex CLI files: sharing one token family across two apps reliably
-provokes reuse detection — each app should sign in once on its own.
+If a subscription is marked `refresh_required` (or `reauth`), re-login that one
+account (`hermes auth remove openai-codex "<label>"` then `hermes auth add
+openai-codex --label "<label>"`) before its access token expires — typically
+days of runway, so no rush, but renewal is off until then. Do not copy refresh
+tokens between Hermes and Codex CLI files: sharing one token family across two
+apps reliably provokes reuse detection — each app should sign in once on its own.
 
 Default `least_weekly_remaining` spends the healthy subscription nearest its weekly limit first, preserving fuller weeks as reserves.
 

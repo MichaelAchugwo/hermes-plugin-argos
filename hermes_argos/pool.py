@@ -23,17 +23,26 @@ def _epoch(value: Any) -> float | None:
     return None
 
 
+def _with_refresh_marker(entry: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Surface a dead refresh chain without blocking an otherwise usable account."""
+    if entry.get("refresh_required"):
+        state["refresh_required"] = True
+        if state.get("reason") is None:
+            state["reason"] = "refresh chain requires re-login; account remains usable until access token expiry"
+    return state
+
+
 def health_for_usage(entry: dict[str, Any], usage: dict[str, Any], *, threshold: float, now: float | None = None) -> dict[str, Any]:
     timestamp = float(now if now is not None else time.time())
     status = str(entry.get("last_status") or "").lower()
     reason = str(entry.get("last_error_reason") or "").lower()
     if status == "dead" or "refresh_token_invalidated" in reason or "invalid_grant" in reason:
-        return {"state": "reauth", "healthy": False, "reason": "OAuth reauthentication required"}
+        return _with_refresh_marker(entry, {"state": "reauth", "healthy": False, "reason": "OAuth reauthentication required"})
     reset = _epoch(entry.get("last_error_reset_at"))
     if status == "exhausted" and (reset is None or reset > timestamp):
-        return {"state": "limited", "healthy": False, "reason": "cooldown active", "reset_at": reset}
+        return _with_refresh_marker(entry, {"state": "limited", "healthy": False, "reason": "cooldown active", "reset_at": reset})
     if not usage.get("available"):
-        return {"state": "unavailable", "healthy": False, "reason": usage.get("reason") or "usage unavailable"}
+        return _with_refresh_marker(entry, {"state": "unavailable", "healthy": False, "reason": usage.get("reason") or "usage unavailable"})
     windows = usage.get("windows") if isinstance(usage.get("windows"), dict) else {}
     remaining = [
         float(window["remaining_pct"])
@@ -42,12 +51,12 @@ def health_for_usage(entry: dict[str, Any], usage: dict[str, Any], *, threshold:
     ]
     if remaining and min(remaining) <= float(threshold):
         reset_times = [window.get("reset_at") for window in windows.values() if isinstance(window, dict) and window.get("reset_at")]
-        return {
+        return _with_refresh_marker(entry, {
             "state": "limited", "healthy": False,
             "reason": f"remaining capacity at or below {threshold:g}%",
             "reset_at": min(reset_times) if reset_times else None,
-        }
-    return {"state": "ok", "healthy": True, "reason": None}
+        })
+    return _with_refresh_marker(entry, {"state": "ok", "healthy": True, "reason": None})
 
 
 def _weekly_remaining(account: dict[str, Any]) -> float:

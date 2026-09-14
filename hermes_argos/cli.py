@@ -102,6 +102,11 @@ def _doctor(store: AuthStore, as_json: bool) -> int:
         warnings.append("No pooled openai-codex credentials; run `hermes auth add openai-codex` for each subscription.")
     if len(entries) < 2:
         warnings.append("Automatic failover needs at least two accounts; one account is currently available.")
+    needs_relogin = [str(item.get("label") or item.get("id") or "?") for item in entries if item.get("refresh_required")]
+    if needs_relogin:
+        warnings.append(
+            "re-login restores automatic token renewal for: " + ", ".join(needs_relogin)
+            + " (accounts stay usable until their access tokens expire)")
     root = store.home / "plugins" / "argos"
     for relative in ("plugin.yaml", "dashboard/manifest.json", "dashboard/plugin_api.py", "desktop/plugin.js"):
         if not (root / relative).exists():

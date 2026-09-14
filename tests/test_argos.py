@@ -126,6 +126,14 @@ def test_health_rejects_empty_cooldown_and_reauth() -> None:
     assert health_for_usage({"last_status": "exhausted", "last_error_reset_at": 200}, usage, threshold=1, now=100)["state"] == "limited"
 
 
+def test_health_reports_refresh_required_marker() -> None:
+    usage = {"available": True, "windows": {"five_hour": {"remaining_pct": 80}}}
+    state = health_for_usage({"refresh_required": True}, usage, threshold=1, now=100)
+    assert state["healthy"] is True
+    assert state["refresh_required"] is True
+    assert "re-login" in str(state.get("reason"))
+
+
 def test_usage_health_is_persisted_until_limiting_window_reset(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     seed(auth, [entry("a", 0, "r-a")])
@@ -211,6 +219,67 @@ class ReusedRefreshError(Exception):
     code = "refresh_token_reused"
 
 
+def jwt_with_exp(offset_seconds: float) -> str:
+    import base64 as _b64
+    import json as _json
+    import time as _time
+    payload = _b64.urlsafe_b64encode(
+        _json.dumps({"exp": _time.time() + offset_seconds}).encode()
+    ).rstrip(b"=").decode()
+    return f"header.{payload}.sig"
+
+
+def test_keepalive_degrades_to_refresh_required_when_access_token_still_usable(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", jwt_with_exp(9 * 24 * 3600))])
+    store = AuthStore(tmp_path)
+
+    def failing(access: str, refresh: str, *, timeout_seconds: float = 20.0):
+        raise ReusedRefreshError("refresh_token_reused")
+
+    report = run_keepalive(store, force=True, refresh_fn=failing)
+
+    after = store.entries()[0]
+    assert report["accounts"][0]["status"] == "refresh_required"
+    assert after["last_status"] == "ok"
+    assert after["refresh_required"] is True
+    assert after["refresh_required_reason"] == "refresh_token_reused"
+
+
+def test_keepalive_marks_dead_only_when_access_token_expired(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", jwt_with_exp(-3600))])
+    store = AuthStore(tmp_path)
+
+    def failing(access: str, refresh: str, *, timeout_seconds: float = 20.0):
+        raise ReusedRefreshError("refresh_token_reused")
+
+    report = run_keepalive(store, force=True, refresh_fn=failing)
+
+    assert report["accounts"][0]["status"] == "reauth_required"
+    assert store.entries()[0]["last_status"] == "dead"
+
+
+def test_keepalive_skips_refresh_required_entries_without_force(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", "access-stale")])
+    store = AuthStore(tmp_path)
+
+    def mark(data: dict) -> None:
+        entries = AuthStore._entries_in(data)
+        entries[0]["refresh_required"] = True
+        entries[0]["last_refresh"] = "2026-01-01T00:00:00Z"
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(mark)
+    calls: list[int] = []
+
+    report = run_keepalive(store, force=False, refresh_fn=lambda *a, **k: calls.append(1) or {})
+
+    assert calls == []
+    assert report["accounts"][0]["status"] == "refresh_required"
+
+
 def test_keepalive_adopts_peer_rotated_tokens_instead_of_marking_dead(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     seed(auth, [entry("acct", 0, "refresh-old", "access-old")])
@@ -233,20 +302,6 @@ def test_keepalive_adopts_peer_rotated_tokens_instead_of_marking_dead(tmp_path: 
     assert report["refreshed"] == 0
 
 
-def test_keepalive_marks_reauth_required_only_when_stored_token_still_fails(tmp_path: Path) -> None:
-    auth = tmp_path / "auth.json"
-    seed(auth, [entry("acct", 0, "refresh-stale", "access-stale")])
-    store = AuthStore(tmp_path)
-
-    def failing(access: str, refresh: str, *, timeout_seconds: float = 20.0):
-        raise ReusedRefreshError("refresh_token_reused")
-
-    report = run_keepalive(store, force=True, refresh_fn=failing)
-
-    assert store.entries()[0]["last_status"] == "dead"
-    assert report["accounts"][0]["status"] == "reauth_required"
-
-
 def test_keepalive_success_clears_stale_error_fields(tmp_path: Path) -> None:
     auth = tmp_path / "auth.json"
     seed(auth, [entry("acct", 0, "refresh-old", "access-old")])
@@ -258,6 +313,7 @@ def test_keepalive_success_clears_stale_error_fields(tmp_path: Path) -> None:
             "last_status": "dead", "last_error_code": 401,
             "last_error_reason": "refresh_token_reused",
             "last_error_message": "OAuth refresh failed; reauthentication required",
+            "refresh_required": True, "refresh_required_reason": "refresh_token_reused",
         })
         data.setdefault("credential_pool", {})["openai-codex"] = entries
 
@@ -276,6 +332,8 @@ def test_keepalive_success_clears_stale_error_fields(tmp_path: Path) -> None:
     assert after["last_status"] == "ok"
     assert "last_error_reason" not in after
     assert "last_error_code" not in after
+    assert "refresh_required" not in after
+    assert "refresh_required_reason" not in after
 
 
 def test_keepalive_skips_while_another_run_holds_the_lock(tmp_path: Path) -> None:
