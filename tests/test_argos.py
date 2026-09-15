@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from hermes_argos.authstore import AuthStore, DuplicateCredentialError
+from hermes_argos.authstore import AuthStore, DuplicateCredentialError, _FileLock
 from hermes_argos.keepalive import run_keepalive
 from hermes_argos.config import load_config
 
-from hermes_argos.pool import choose_account, health_for_usage, sync_usage_health
+from hermes_argos.pool import choose_account, heal_premature_dead, health_for_usage, status, sync_usage_health
 from hermes_argos.usage import parse_usage_payload
 
 
@@ -371,6 +371,78 @@ def test_keepalive_takes_over_a_stale_lock(tmp_path: Path) -> None:
 
     assert report["refreshed"] == 1
     assert lock.exists() is False
+
+
+def test_file_lock_waits_out_a_held_byte_range_instead_of_crashing(tmp_path: Path) -> None:
+    msvcrt = pytest.importorskip("msvcrt")
+    lock_path = tmp_path / "auth.lock"
+    lock_path.write_bytes(b"0")
+    holder = open(lock_path, "a+b")
+    holder.seek(0)
+    msvcrt.locking(holder.fileno(), msvcrt.LK_NBLCK, 1)
+    try:
+        lock = _FileLock(lock_path, timeout=0.3)
+        with pytest.raises(TimeoutError):
+            with lock:
+                pass
+    finally:
+        holder.seek(0)
+        msvcrt.locking(holder.fileno(), msvcrt.LK_UNLCK, 1)
+        holder.close()
+
+
+def test_heal_premature_dead_restores_account_with_valid_access_token(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", jwt_with_exp(9 * 24 * 3600))])
+    store = AuthStore(tmp_path)
+
+    def mark(data: dict) -> None:
+        entries = AuthStore._entries_in(data)
+        entries[0].update({"last_status": "dead", "last_error_code": 401, "last_error_reason": "refresh_token_reused"})
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(mark)
+
+    assert heal_premature_dead(store) is True
+    healed = store.entries()[0]
+    assert healed["last_status"] == "ok"
+    assert healed["refresh_required"] is True
+
+
+def test_heal_premature_dead_keeps_account_without_valid_access(tmp_path: Path) -> None:
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", jwt_with_exp(-3600))])
+    store = AuthStore(tmp_path)
+
+    def mark(data: dict) -> None:
+        entries = AuthStore._entries_in(data)
+        entries[0].update({"last_status": "dead", "last_error_code": 401, "last_error_reason": "refresh_token_reused"})
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(mark)
+
+    assert heal_premature_dead(store) is False
+    assert store.entries()[0]["last_status"] == "dead"
+
+
+def test_status_heals_premature_dead_when_policy_runs(tmp_path: Path, monkeypatch) -> None:
+    import hermes_argos.pool as pool_module
+
+    monkeypatch.setattr(pool_module, "fetch_all_usage", lambda store, force=False: {})
+    auth = tmp_path / "auth.json"
+    seed(auth, [entry("acct", 0, "refresh-stale", jwt_with_exp(9 * 24 * 3600))])
+    store = AuthStore(tmp_path)
+
+    def mark(data: dict) -> None:
+        entries = AuthStore._entries_in(data)
+        entries[0].update({"last_status": "dead", "last_error_code": 401, "last_error_reason": "refresh_token_reused"})
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(mark)
+
+    status(store, apply_policy=True)
+
+    assert store.entries()[0]["last_status"] == "ok"
 
 
 def test_dashboard_api_imports_when_hermes_loads_it_by_file_path(tmp_path: Path) -> None:

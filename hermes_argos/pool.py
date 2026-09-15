@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from .authstore import AuthStore
 from .config import load_config
+from .keepalive import _access_usable
 from .usage import fetch_all_usage
 
 
@@ -21,6 +22,43 @@ def _epoch(value: Any) -> float | None:
             except ValueError:
                 return None
     return None
+
+
+def heal_premature_dead(store: AuthStore, *, now: float | None = None) -> bool:
+    """Restore accounts whose refresh chain died but whose access token still works.
+
+    Stale processes or core rewrites can mark such an account ``dead``; dead
+    excludes a credential from rotation, so a usable account must be restored to
+    ``ok`` (with the refresh_required marker intact) instead of being lost.
+    """
+    timestamp = float(now if now is not None else time.time())
+    target_ids = [
+        str(entry.get("id"))
+        for entry in store.entries()
+        if str(entry.get("last_status") or "").lower() == "dead"
+        and _access_usable(str(entry.get("access_token") or ""), now=timestamp)
+    ]
+    if not target_ids:
+        return False
+
+    def apply(data: dict[str, Any]) -> None:
+        entries = AuthStore._entries_in(data)
+        for entry in entries:
+            if str(entry.get("id")) not in target_ids:
+                continue
+            reason = str(entry.get("last_error_reason") or "refresh_token_invalidated")
+            for key in ("last_error_code", "last_error_reason", "last_error_message", "last_error_reset_at", "failure_reason"):
+                entry.pop(key, None)
+            entry.update({
+                "last_status": "ok", "last_status_at": timestamp,
+                "refresh_required": True, "refresh_required_reason": reason,
+                "refresh_required_at": timestamp,
+                "last_refresh": datetime.now(timezone.utc).isoformat(),
+            })
+        data.setdefault("credential_pool", {})["openai-codex"] = entries
+
+    store.mutate(apply)
+    return True
 
 
 def _with_refresh_marker(entry: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +190,8 @@ def sync_usage_health(
 def status(store: AuthStore | None = None, *, force: bool = False, apply_policy: bool = True) -> dict[str, Any]:
     auth = store or AuthStore()
     config = load_config(auth.home)
+    if apply_policy:
+        heal_premature_dead(auth)
     public = auth.public_entries()
     raw_by_id = {str(entry.get("id")): entry for entry in auth.entries()}
     usage_by_id = fetch_all_usage(auth, force=force)

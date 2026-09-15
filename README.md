@@ -230,6 +230,10 @@ detection, which invalidates the whole token family — an account then shows
   token expires, the marker pauses pointless refresh replays, and a re-login is
   flagged; `dead` (excluded from rotation) is written only when the access
   token itself is missing or expired;
+- a `dead` mark written by an older build or a core rewrite is **healed
+  automatically** by pool policy whenever the access token still works, so
+  rotation never loses a usable account; account store locking tolerates byte
+  contention instead of failing under load;
 - keepalive attempts are throttled to session starts (≥5 minutes apart per
   process), never to the quota-polling loop, so many short-lived CLI processes
   cannot each replay the same token;

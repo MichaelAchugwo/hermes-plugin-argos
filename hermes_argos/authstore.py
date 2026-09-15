@@ -51,10 +51,14 @@ class _FileLock:
         self._thread_lock.acquire()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.handle = open(self.path, "a+b")
-        self.handle.seek(0)
-        if self.handle.read(1) == b"":
-            self.handle.write(b"0")
-            self.handle.flush()
+        try:
+            self.handle.seek(0)
+            if self.handle.read(1) == b"":
+                self.handle.write(b"0")
+                self.handle.flush()
+        except OSError:
+            # Another process holds the byte-range lock; byte 0 exists by its hand.
+            pass
         deadline = time.monotonic() + self.timeout
         while True:
             try:
